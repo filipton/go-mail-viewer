@@ -59,24 +59,27 @@ func main() {
 		log.Fatal("Client select failed: " + err.Error())
 	}
 
-	seqSet := imap.SeqSetNum(mbox.NumMessages - 0)
+	seqSet := new(imap.SeqSet)
+	seqSet.AddRange(1, mbox.NumMessages)
 	fetchOptions := &imap.FetchOptions{
 		BodySection: []*imap.FetchItemBodySection{{}},
 	}
-	fetchCmd := c.Fetch(seqSet, fetchOptions)
+	fetchCmd := c.Fetch(*seqSet, fetchOptions)
 	defer fetchCmd.Close()
 
-	msg := fetchCmd.Next()
-	if msg == nil {
-		log.Fatalf("FETCH command did not return any message")
-	}
+	for {
+		msg := fetchCmd.Next()
+		if msg == nil {
+			break
+		}
 
-	emailData, err := getEmailData(msg)
-	if err != nil {
-		log.Fatalf("Get email data failed!")
-	}
+		emailData, err := getEmailData(msg)
+		if err != nil {
+			log.Fatalf("Get email data failed!")
+		}
 
-	log.Printf("EmailData: %v", emailData)
+		log.Printf("EmailData: %v", emailData.Subject)
+	}
 
 	if err := fetchCmd.Close(); err != nil {
 		log.Fatalf("FETCH command failed: %v", err)
@@ -154,7 +157,6 @@ func getEmailData(msg *imapclient.FetchMessageData) (*Email, error) {
 			email.Body[ct] = string(b)
 		case *mail.AttachmentHeader:
 			filename, _ := h.Filename()
-			log.Printf("Attachment: %v", filename)
 			buf := new(bytes.Buffer)
 			buf.ReadFrom(p.Body)
 			email.Attachments[filename] = buf.Bytes()
