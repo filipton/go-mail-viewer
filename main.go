@@ -7,6 +7,7 @@ import (
 
 	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
+	_ "github.com/emersion/go-message/charset"
 	"github.com/emersion/go-message/mail"
 	"github.com/joho/godotenv"
 )
@@ -40,12 +41,12 @@ func main() {
 		log.Println("* " + m.Mailbox)
 	}
 
-	_, err = c.Select("INBOX", nil).Wait()
+	mbox, err := c.Select("INBOX", nil).Wait()
 	if err != nil {
 		log.Fatal("Client select failed: " + err.Error())
 	}
 
-	seqSet := imap.SeqSetNum(1)
+	seqSet := imap.SeqSetNum(mbox.NumMessages - 2)
 	fetchOptions := &imap.FetchOptions{
 		BodySection: []*imap.FetchItemBodySection{{}},
 	}
@@ -87,6 +88,11 @@ func main() {
 	} else {
 		log.Printf("Date: %v", date)
 	}
+    if from, err := h.AddressList("From"); err != nil {
+        log.Printf("failed to parse From header field: %v", err)
+    } else {
+        log.Printf("From: %v", from)
+    }
 	if to, err := h.AddressList("To"); err != nil {
 		log.Printf("failed to parse To header field: %v", err)
 	} else {
@@ -111,11 +117,35 @@ func main() {
 		case *mail.InlineHeader:
 			// This is the message's text (can be plain-text or HTML)
 			b, _ := io.ReadAll(p.Body)
+            ct, _, _ := h.ContentType()
+            if ct == "text/plain" {
+                log.Printf("%v", string(b))
+            }
+
+            /*
+            log.Printf("Content-Type: %v", ct)
 			log.Printf("Inline text: %v", string(b))
+            */
 		case *mail.AttachmentHeader:
 			// This is an attachment
 			filename, _ := h.Filename()
 			log.Printf("Attachment: %v", filename)
+
+			// Save the attachment to a file
+            /*
+			f, err := os.Create(filename)
+			if err != nil {
+				log.Fatalf("failed to create attachment file: %v", err)
+			}
+
+			if _, err := io.Copy(f, p.Body); err != nil {
+				log.Fatalf("failed to write attachment file: %v", err)
+			}
+
+			if err := f.Close(); err != nil {
+				log.Fatalf("failed to close attachment file: %v", err)
+			}
+            */
 		}
 	}
 
