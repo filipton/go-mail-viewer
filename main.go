@@ -13,11 +13,13 @@ import (
 	"github.com/emersion/go-imap/v2/imapclient"
 	_ "github.com/emersion/go-message/charset"
 	"github.com/emersion/go-message/mail"
+	"github.com/gdamore/tcell/v2"
 	"github.com/joho/godotenv"
 	"github.com/rivo/tview"
 )
 
 type Email struct {
+	Uid         uint32
 	From        []*mail.Address
 	To          []*mail.Address
 	Date        time.Time
@@ -26,8 +28,13 @@ type Email struct {
 	Attachments map[string][]byte
 }
 
+const (
+	MESSAGES_CHUNK_SIZE = 100
+)
+
 var app *tview.Application
 var emails []Email = make([]Email, 0)
+var fetchMoreMessages chan bool = make(chan bool)
 
 func main() {
 	godotenv.Load()
@@ -36,10 +43,13 @@ func main() {
 	previewView := tview.NewTextView().SetWordWrap(true).SetChangedFunc(func() {
 		app.Draw()
 	})
-	previewView.SetBorder(true).SetTitle("Preview")
+	previewView.SetBorder(true).SetTitle("Preview").SetBorderPadding(1, 1, 1, 1)
 
 	list := tview.NewList().ShowSecondaryText(false)
 	list.SetBorder(true).SetTitle("Messages")
+	list.AddItem("Fetch more", "Press to fetch more messages", 'f', func() {
+		fetchMoreMessages <- true
+	})
 	list.AddItem("Quit", "Press to exit", 'q', func() {
 		app.Stop()
 	})
@@ -49,13 +59,27 @@ func main() {
 			return
 		}
 
-		previewView.SetText(emails[index].Body["text/plain"])
+		previewView.SetText(emails[len(emails)-index-1].Body["text/plain"])
 	})
 
 	go fetchMails(list)
 	flex := tview.NewFlex().
 		AddItem(list, 0, 1, true).
 		AddItem(previewView, 0, 1, false)
+
+	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		switch event.Key() {
+		case tcell.KeyTab:
+			if app.GetFocus() == list {
+				app.SetFocus(previewView)
+			} else {
+				app.SetFocus(list)
+			}
+			return nil
+		}
+
+		return event
+	})
 
 	if err := app.SetRoot(flex, true).Run(); err != nil {
 		panic(err)
@@ -90,16 +114,39 @@ func fetchMails(list *tview.List) {
 		log.Fatal("Client select failed: " + err.Error())
 	}
 
+	fetchMessages(int(mbox.NumMessages)-MESSAGES_CHUNK_SIZE, int(mbox.NumMessages), c, list)
+
+	for {
+		<-fetchMoreMessages
+		from := int(mbox.NumMessages) - len(emails) - MESSAGES_CHUNK_SIZE
+		to := int(mbox.NumMessages) - len(emails)
+
+		fetchMessages(from, to, c, list)
+	}
+}
+
+func fetchMessages(from int, to int, c *imapclient.Client, list *tview.List) {
+	if from < 1 {
+		from = 1
+	}
+
+	messagesToFetch := to - from
 	seqSet := new(imap.SeqSet)
-	seqSet.AddRange(mbox.NumMessages-100, mbox.NumMessages)
+	seqSet.AddRange(uint32(from), uint32(to))
 	fetchOptions := &imap.FetchOptions{
 		BodySection: []*imap.FetchItemBodySection{{}},
 	}
 	fetchCmd := c.Fetch(*seqSet, fetchOptions)
 	defer fetchCmd.Close()
 
-	i := 1
-	for {
+	oldCurentItem := list.GetCurrentItem()
+	if len(emails) == 0 {
+		oldCurentItem = 0
+	}
+
+	listPos := len(emails)
+
+	for i := 0; i < int(messagesToFetch); i-- {
 		msg := fetchCmd.Next()
 		if msg == nil {
 			break
@@ -112,17 +159,11 @@ func fetchMails(list *tview.List) {
 
 		emails = append(emails, *emailData)
 
-		//log.Printf("EmailData: %v", emailData.Subject)
-		listItem := fmt.Sprintf("%d. [%s] %s (%s)", i, emailData.From[0].Address, emailData.Subject, emailData.Date)
-		list.InsertItem(-2, listItem, "", 0, nil)
-
-		if i == 1 {
-			list.SetCurrentItem(0)
-		}
+		listItem := fmt.Sprintf("%d. [%s] %s (%s)", emailData.Uid, emailData.From[0].Address, emailData.Subject, emailData.Date)
+		list.InsertItem(listPos, listItem, "", 0, nil)
+		list.SetCurrentItem(oldCurentItem)
 
 		app.Draw()
-
-		i += 1
 	}
 
 	if err := fetchCmd.Close(); err != nil {
@@ -179,6 +220,7 @@ func getEmailData(msg *imapclient.FetchMessageData) (*Email, error) {
 	}
 
 	email := new(Email)
+	email.Uid = msg.SeqNum
 	email.Date = date
 	email.From = from
 	email.To = to
