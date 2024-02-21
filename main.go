@@ -14,6 +14,7 @@ import (
 	_ "github.com/emersion/go-message/charset"
 	"github.com/emersion/go-message/mail"
 	"github.com/joho/godotenv"
+	"github.com/rivo/tview"
 )
 
 type Email struct {
@@ -25,9 +26,44 @@ type Email struct {
 	Attachments map[string][]byte
 }
 
+var app *tview.Application
+var emails []Email = make([]Email, 0)
+
 func main() {
 	godotenv.Load()
+	app = tview.NewApplication()
 
+	previewView := tview.NewTextView().SetWordWrap(true).SetChangedFunc(func() {
+		app.Draw()
+	})
+	previewView.SetBorder(true).SetTitle("Preview")
+
+	list := tview.NewList().ShowSecondaryText(false)
+	list.SetBorder(true).SetTitle("Messages")
+	list.AddItem("Quit", "Press to exit", 'q', func() {
+		app.Stop()
+	})
+
+	list.SetChangedFunc(func(index int, mainText, secondaryText string, shortcut rune) {
+		if index >= len(emails) {
+			return
+		}
+
+		previewView.SetText(emails[index].Body["text/plain"])
+	})
+
+	go fetchMails(list)
+	flex := tview.NewFlex().
+		AddItem(list, 0, 1, true).
+		AddItem(previewView, 0, 1, false)
+
+	if err := app.SetRoot(flex, true).Run(); err != nil {
+		panic(err)
+	}
+
+}
+
+func fetchMails(list *tview.List) {
 	imapServer := os.Getenv("IMAP_SERVER")
 	imapUsername := os.Getenv("IMAP_USERNAME")
 	imapPassword := os.Getenv("IMAP_PASSWORD")
@@ -44,14 +80,9 @@ func main() {
 		log.Fatal("Client login failed: " + err.Error())
 	}
 
-	log.Println("Mailboxes: ")
-	mailboxes, err := c.List("", "*", nil).Collect()
+	_, err = c.List("", "*", nil).Collect()
 	if err != nil {
 		log.Fatal("Client list failed: " + err.Error())
-	}
-
-	for _, m := range mailboxes {
-		log.Println("* " + m.Mailbox)
 	}
 
 	mbox, err := c.Select("INBOX", nil).Wait()
@@ -60,13 +91,14 @@ func main() {
 	}
 
 	seqSet := new(imap.SeqSet)
-	seqSet.AddRange(1, mbox.NumMessages)
+	seqSet.AddRange(mbox.NumMessages-100, mbox.NumMessages)
 	fetchOptions := &imap.FetchOptions{
 		BodySection: []*imap.FetchItemBodySection{{}},
 	}
 	fetchCmd := c.Fetch(*seqSet, fetchOptions)
 	defer fetchCmd.Close()
 
+	i := 1
 	for {
 		msg := fetchCmd.Next()
 		if msg == nil {
@@ -78,7 +110,19 @@ func main() {
 			log.Fatalf("Get email data failed!")
 		}
 
-		log.Printf("EmailData: %v", emailData.Subject)
+		emails = append(emails, *emailData)
+
+		//log.Printf("EmailData: %v", emailData.Subject)
+		listItem := fmt.Sprintf("%d. [%s] %s (%s)", i, emailData.From[0].Address, emailData.Subject, emailData.Date)
+		list.InsertItem(-2, listItem, "", 0, nil)
+
+		if i == 1 {
+			list.SetCurrentItem(0)
+		}
+
+		app.Draw()
+
+		i += 1
 	}
 
 	if err := fetchCmd.Close(); err != nil {
