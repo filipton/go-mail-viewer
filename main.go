@@ -124,7 +124,7 @@ func fetchMails(list *tview.List) {
 	}
 	numMsgs := mbox.NumMessages
 
-	fetchMessages(int(numMsgs)-MESSAGES_CHUNK_SIZE, int(numMsgs), c, list)
+	fetchMessages(int(numMsgs)-MESSAGES_CHUNK_SIZE, int(numMsgs), c, list, false)
 
 	for {
 		mode := <-fetchMailsChan
@@ -132,7 +132,7 @@ func fetchMails(list *tview.List) {
 			from := int(numMsgs) - len(emails) - MESSAGES_CHUNK_SIZE
 			to := int(numMsgs) - len(emails)
 
-			fetchMessages(from, to, c, list)
+			fetchMessages(from, to, c, list, false)
 		} else if mode == 1 {
 			mbox, err = c.Select("INBOX", nil).Wait()
 			if err != nil {
@@ -143,12 +143,13 @@ func fetchMails(list *tview.List) {
 				continue
 			}
 
-			fetchMessages(int(numMsgs), int(mbox.NumMessages), c, list)
+			fetchMessages(int(numMsgs), int(mbox.NumMessages), c, list, true)
+			numMsgs = mbox.NumMessages
 		}
 	}
 }
 
-func fetchMessages(from int, to int, c *imapclient.Client, list *tview.List) {
+func fetchMessages(from int, to int, c *imapclient.Client, list *tview.List, start bool) {
 	if from < 1 {
 		from = 1
 	}
@@ -168,6 +169,9 @@ func fetchMessages(from int, to int, c *imapclient.Client, list *tview.List) {
 	}
 
 	listPos := len(emails)
+	if start {
+		listPos = 0
+	}
 
 	for i := 0; i < int(messagesToFetch); i-- {
 		msg := fetchCmd.Next()
@@ -178,6 +182,10 @@ func fetchMessages(from int, to int, c *imapclient.Client, list *tview.List) {
 		emailData, err := getEmailData(msg)
 		if err != nil {
 			log.Fatalf("Get email data failed!")
+		}
+
+		if emailsContains(emailData.Uid) {
+			continue
 		}
 
 		emails = append(emails, *emailData)
@@ -192,6 +200,16 @@ func fetchMessages(from int, to int, c *imapclient.Client, list *tview.List) {
 	if err := fetchCmd.Close(); err != nil {
 		log.Fatalf("FETCH command failed: %v", err)
 	}
+}
+
+func emailsContains(uid uint32) bool {
+	for _, email := range emails {
+		if email.Uid == uid {
+			return true
+		}
+	}
+
+	return false
 }
 
 func getEmailData(msg *imapclient.FetchMessageData) (*Email, error) {
