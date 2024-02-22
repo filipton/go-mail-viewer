@@ -29,12 +29,15 @@ type Email struct {
 }
 
 const (
-	MESSAGES_CHUNK_SIZE = 100
+	MESSAGES_CHUNK_SIZE = 25
 )
 
 var app *tview.Application
 var emails []Email = make([]Email, 0)
-var fetchMoreMessages chan bool = make(chan bool)
+var fetchMailsChan chan int = make(chan int)
+
+// 0 - fetch more
+// 1 - refresh
 
 func main() {
 	godotenv.Load()
@@ -48,7 +51,9 @@ func main() {
 	list := tview.NewList().ShowSecondaryText(false)
 	list.SetBorder(true).SetTitle("Messages")
 	list.AddItem("Fetch more", "Press to fetch more messages", 'f', func() {
-		fetchMoreMessages <- true
+		go func() {
+			fetchMailsChan <- 0
+		}()
 	})
 	list.AddItem("Quit", "Press to exit", 'q', func() {
 		app.Stop()
@@ -76,6 +81,10 @@ func main() {
 				app.SetFocus(list)
 			}
 			return nil
+		case tcell.KeyCtrlR:
+			go func() {
+				fetchMailsChan <- 1
+			}()
 		}
 
 		return event
@@ -113,15 +122,29 @@ func fetchMails(list *tview.List) {
 	if err != nil {
 		log.Fatal("Client select failed: " + err.Error())
 	}
+	numMsgs := mbox.NumMessages
 
-	fetchMessages(int(mbox.NumMessages)-MESSAGES_CHUNK_SIZE, int(mbox.NumMessages), c, list)
+	fetchMessages(int(numMsgs)-MESSAGES_CHUNK_SIZE, int(numMsgs), c, list)
 
 	for {
-		<-fetchMoreMessages
-		from := int(mbox.NumMessages) - len(emails) - MESSAGES_CHUNK_SIZE
-		to := int(mbox.NumMessages) - len(emails)
+		mode := <-fetchMailsChan
+		if mode == 0 {
+			from := int(numMsgs) - len(emails) - MESSAGES_CHUNK_SIZE
+			to := int(numMsgs) - len(emails)
 
-		fetchMessages(from, to, c, list)
+			fetchMessages(from, to, c, list)
+		} else if mode == 1 {
+			mbox, err = c.Select("INBOX", nil).Wait()
+			if err != nil {
+				log.Fatal("Client select failed: " + err.Error())
+			}
+
+			if mbox.NumMessages == numMsgs {
+				continue
+			}
+
+			fetchMessages(int(numMsgs), int(mbox.NumMessages), c, list)
+		}
 	}
 }
 
