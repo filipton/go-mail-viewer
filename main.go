@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/emersion/go-imap/v2"
@@ -33,7 +34,7 @@ const (
 )
 
 var app *tview.Application
-var emails []Email = make([]Email, 0)
+var emails map[uint32]Email = make(map[uint32]Email)
 var fetchMailsChan chan int = make(chan int)
 
 // 0 - fetch more
@@ -64,7 +65,8 @@ func main() {
 			return
 		}
 
-		previewView.SetText(emails[len(emails)-index-1].Body["text/plain"])
+		uidInt, _ := strconv.Atoi(secondaryText)
+		previewView.SetText(emails[uint32(uidInt)].Body["text/plain"])
 	})
 
 	go fetchMails(list)
@@ -188,10 +190,9 @@ func fetchMessages(from int, to int, c *imapclient.Client, list *tview.List, sta
 			continue
 		}
 
-		emails = append(emails, *emailData)
-
+		emails[emailData.Uid] = *emailData
 		listItem := fmt.Sprintf("%d. [%s] %s (%s)", emailData.Uid, emailData.From[0].Address, emailData.Subject, emailData.Date)
-		list.InsertItem(listPos, listItem, "", 0, nil)
+		list.InsertItem(listPos, listItem, fmt.Sprint(emailData.Uid), 0, nil)
 		list.SetCurrentItem(oldCurentItem)
 
 		app.Draw()
@@ -210,6 +211,13 @@ func emailsContains(uid uint32) bool {
 	}
 
 	return false
+}
+
+func prepend(s []Email, e Email) []Email {
+	s = append(s, Email{})
+	copy(s[1:], s)
+	s[0] = e
+	return s
 }
 
 func getEmailData(msg *imapclient.FetchMessageData) (*Email, error) {
