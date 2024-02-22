@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"strconv"
 	"time"
 
@@ -67,6 +68,26 @@ func main() {
 
 		uidInt, _ := strconv.Atoi(secondaryText)
 		previewView.SetText(emails[uint32(uidInt)].Body["text/plain"])
+	})
+
+	list.SetSelectedFunc(func(index int, mainText, secondaryText string, r rune) {
+		if index >= len(emails) {
+			return
+		}
+
+		uidInt, _ := strconv.Atoi(secondaryText)
+		email := emails[uint32(uidInt)]
+
+		tmpPath := fmt.Sprintf("/tmp/%d.html", email.Uid)
+		file, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY, 0400)
+		if err != nil {
+			log.Fatalf("Cannot open file: %v", err)
+		}
+
+		file.WriteString(email.Body["text/html"])
+		file.Close()
+
+		xdgOpen(tmpPath, true)
 	})
 
 	go fetchMails(list)
@@ -213,13 +234,6 @@ func emailsContains(uid uint32) bool {
 	return false
 }
 
-func prepend(s []Email, e Email) []Email {
-	s = append(s, Email{})
-	copy(s[1:], s)
-	s[0] = e
-	return s
-}
-
 func getEmailData(msg *imapclient.FetchMessageData) (*Email, error) {
 	if msg == nil {
 		return nil, errors.New("Email is null")
@@ -299,4 +313,24 @@ func getEmailData(msg *imapclient.FetchMessageData) (*Email, error) {
 	}
 
 	return email, nil
+}
+
+func xdgOpen(path string, remove bool) error {
+	errChan := make(chan error)
+
+	go func() {
+		cmd := exec.Command("xdg-open", path)
+		err := cmd.Start()
+		errChan <- err
+
+		cmd.Wait()
+
+		if remove {
+			time.Sleep(5 * time.Second)
+			os.Remove(path)
+		}
+	}()
+
+	err := <-errChan
+	return err
 }
